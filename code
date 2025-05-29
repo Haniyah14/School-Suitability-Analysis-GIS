@@ -1,0 +1,509 @@
+// --- 1. Load District Boundaries for Sindh ---
+// Using GADM administrative boundaries dataset
+var adminLevel2 = ee.FeatureCollection("FAO/GAUL/2015/level2");
+var pakistan = adminLevel2.filter(ee.Filter.eq('ADM0_NAME', 'Pakistan'));
+var sindhDistricts = pakistan.filter(ee.Filter.eq('ADM1_NAME', 'Sindh'));
+
+// --- 2. Create a Dropdown Menu for District Selection ---
+var districtSelect = ui.Select({
+  items: sindhDistricts.aggregate_array('ADM2_NAME').sort().getInfo(),
+  placeholder: 'Select a District',
+  style: {stretch: 'horizontal', fontSize: '11px'}
+});
+
+var region;
+var legend = null;
+var summaryPanel = null;
+var helpPanel = null;
+
+// --- 3. Create UI Sliders for Buffer Distances ---
+var popBufferSlider = ui.Slider({
+  min: 1000, 
+  max: 10000,
+  value: 3000,
+  step: 500,
+  onChange: function() {
+    if (region) calculateLayers();
+  },
+  style: {stretch: 'horizontal', fontSize: '10px'}
+});
+
+var roadBufferSlider = ui.Slider({
+  min: 100, 
+  max: 5000,
+  value: 1000,
+  step: 100,
+  onChange: function() {
+    if (region) calculateLayers();
+  },
+  style: {stretch: 'horizontal', fontSize: '10px'}
+});
+
+var schoolBufferSlider = ui.Slider({
+  min: 100, 
+  max: 5000,
+  value: 1000,
+  step: 100,
+  onChange: function() {
+    if (region) calculateLayers();
+  },
+  style: {stretch: 'horizontal', fontSize: '10px'}
+});
+
+// --- 4. UI Panel for the Dropdown and Apply Button ---
+var applyDistrictButton = ui.Button({
+  label: 'Show',
+  onClick: function() {
+    var selectedDistrictName = districtSelect.getValue();
+    
+    if (!selectedDistrictName) {
+      // Create error panel instead of ui.alert
+      var errorPanel = ui.Panel({
+        widgets: [
+          ui.Label({value: '⚠ Please select a district!', style: {color: 'red', fontSize: '10px'}}),
+          ui.Button({
+            label: 'Close',
+            onClick: function() {
+              Map.remove(errorPanel);
+            },
+            style: {fontSize: '10px'}
+          })
+        ],
+        style: {
+          position: 'top-center',
+          padding: '8px',
+          backgroundColor: 'white'
+        }
+      });
+      Map.add(errorPanel);
+      return;
+    }
+    
+    var selectedDistrict = sindhDistricts.filter(ee.Filter.eq('ADM2_NAME', selectedDistrictName)).first();
+    var districtGeometry = selectedDistrict.geometry();
+    
+    region = districtGeometry;
+    
+    Map.centerObject(region, 10);
+    
+    calculateLayers();
+  },
+  style: {fontSize: '11px', padding: '0px', margin: '0px'}
+});
+
+// --- 5. Create layer visibility control checkboxes ---
+var showRoadsCheckbox = ui.Checkbox({
+  label: 'Roads',
+  value: false,
+  onChange: function(checked) {
+    if (region) toggleLayerVisibility('Roads', checked);
+  },
+  style: {fontSize: '10px'}
+});
+
+var showSchoolsCheckbox = ui.Checkbox({
+  label: 'Schools',
+  value: false,
+  onChange: function(checked) {
+    if (region) toggleLayerVisibility('Existing Schools', checked);
+  },
+  style: {fontSize: '10px'}
+});
+
+var showPopDensityCheckbox = ui.Checkbox({
+  label: 'Pop. Density',
+  value: false,
+  onChange: function(checked) {
+    if (region) toggleLayerVisibility('Population Density', checked);
+  },
+  style: {fontSize: '10px'}
+});
+
+// Function to toggle layer visibility
+function toggleLayerVisibility(layerName, visible) {
+  Map.layers().forEach(function(layer) {
+    if (layer.getName() === layerName) {
+      layer.setShown(visible);
+    }
+  });
+}
+
+// Create horizontal layout for district selection
+var districtPanel = ui.Panel({
+  widgets: [districtSelect, applyDistrictButton],
+  layout: ui.Panel.Layout.Flow('horizontal'),
+  style: {stretch: 'horizontal'}
+});
+
+// Create horizontal layout for layer visibility checkboxes
+var checkboxPanel = ui.Panel({
+  widgets: [showPopDensityCheckbox, showRoadsCheckbox, showSchoolsCheckbox],
+  layout: ui.Panel.Layout.Flow('horizontal'),
+  style: {stretch: 'horizontal', margin: '0px'}
+});
+
+// Create panel with compact label and slider
+function createSliderPanel(labelText, slider) {
+  var label = ui.Label(labelText, {fontSize: '10px', margin: '0px'});
+  return ui.Panel({
+    widgets: [
+      ui.Panel({
+        widgets: [label],
+        style: {width: '80px', margin: '0px', padding: '0px'}
+      }),
+      slider
+    ],
+    layout: ui.Panel.Layout.Flow('horizontal'),
+    style: {stretch: 'horizontal', margin: '2px 0px'}
+  });
+}
+
+// --- 6. Create Help Button and Function ---
+var helpButton = ui.Button({
+  label: 'Help',
+  onClick: function() {
+    showHelpPanel();
+  },
+  style: {fontSize: '11px', padding: '0px', margin: '0px'}
+});
+
+function showHelpPanel() {
+  // Remove existing help panel if it exists
+  if (helpPanel) {
+    Map.remove(helpPanel);
+    helpPanel = null;
+    return;
+  }
+  
+  helpPanel = ui.Panel({
+    widgets: [
+      ui.Label({
+        value: 'School Suitability Analysis - Help', 
+        style: {fontWeight: 'bold', fontSize: '12px', margin: '0px 0px 4px 0px'}
+      }),
+      ui.Label({
+        value: 'How to use this tool:', 
+        style: {fontWeight: 'bold', fontSize: '11px', margin: '0px 0px 2px 0px'}
+      }),
+      ui.Label({
+        value: '1. Select a district from the dropdown menu and click "Show"', 
+        style: {fontSize: '10px', margin: '0px 0px 2px 0px'}
+      }),
+      ui.Label({
+        value: '2. Adjust buffer distances using the sliders:', 
+        style: {fontSize: '10px', margin: '0px 0px 1px 0px'}
+      }),
+      ui.Label({
+        value: '   • Population areas: Distance from populated areas',
+        style: {fontSize: '10px', margin: '0px 0px 1px 0px'}
+      }),
+      ui.Label({
+        value: '   • Roads: Distance from road networks',
+        style: {fontSize: '10px', margin: '0px 0px 1px 0px'}
+      }),
+      ui.Label({
+        value: '   • Schools: Distance from existing schools',
+        style: {fontSize: '10px', margin: '0px 0px 1px 0px'}
+      }),
+      ui.Label({
+        value: '3. Use the checkboxes to show/hide data layers',
+        style: {fontSize: '10px', margin: '0px 0px 2px 0px'}
+      }),
+      ui.Label({
+        value: 'About this tool:', 
+        style: {fontWeight: 'bold', fontSize: '11px', margin: '2px 0px 2px 0px'}
+      }),
+      ui.Label({
+        value: 'This application identifies suitable locations for new schools in Sindh, Pakistan based on:',
+        style: {fontSize: '10px', margin: '0px 0px 1px 0px'}
+      }),
+      ui.Label({
+        value: '• Proximity to populated areas (should be within buffer)',
+        style: {fontSize: '10px', margin: '0px 0px 1px 0px'}
+      }),
+      ui.Label({
+        value: '• Accessibility to roads (should be within buffer)',
+        style: {fontSize: '10px', margin: '0px 0px 1px 0px'}
+      }),
+      ui.Label({
+        value: '• Distance from existing schools (should be outside buffer)',
+        style: {fontSize: '10px', margin: '0px 0px 4px 0px'}
+      }),
+      ui.Button({
+        label: 'Close Help',
+        onClick: function() {
+          Map.remove(helpPanel);
+          helpPanel = null;
+        },
+        style: {fontSize: '10px'}
+      })
+    ],
+    style: {
+      position: 'bottom-left',
+      width: '280px',
+      padding: '8px',
+      backgroundColor: 'white'
+    }
+  });
+  
+  Map.add(helpPanel);
+}
+
+// --- 7. Add UI Panel to the Map ---
+var districtSelectionUI = ui.Panel({
+  widgets: [
+    ui.Panel({
+      widgets: [
+        ui.Label({value: 'School Suitability Analysis', style: {fontWeight: 'bold', fontSize: '12px', margin: '0px 0px 4px 0px'}}),
+        helpButton
+      ],
+      layout: ui.Panel.Layout.Flow('horizontal'),
+      style: {stretch: 'horizontal'}
+    }),
+    ui.Label('District:', {fontSize: '10px', margin: '0px'}),
+    districtPanel,
+    createSliderPanel('Pop. areas (m):', popBufferSlider),
+    createSliderPanel('Roads (m):', roadBufferSlider),
+    createSliderPanel('Schools (m):', schoolBufferSlider),
+    ui.Label({value: 'Show layers:', style: {fontSize: '10px', margin: '2px 0px 0px 0px'}}),
+    checkboxPanel
+  ],
+  style: {
+    position: 'top-left',
+    width: '230px',
+    padding: '6px',
+    backgroundColor: 'white'
+  }
+});
+
+Map.add(districtSelectionUI);
+
+// --- 8. Buffer & Display Layers Function ---
+function calculateLayers() {
+  
+  var dataset = ee.ImageCollection("CIESIN/GPWv411/GPW_UNWPP-Adjusted_Population_Density").first();
+  var population = dataset.select("unwpp-adjusted_population_density").clip(region);
+  
+  var popBufferDist = popBufferSlider.getValue();
+  var roadBufferDist = roadBufferSlider.getValue();
+  var schoolBufferDist = schoolBufferSlider.getValue();
+
+  // Calculate population statistics for the summary
+  var popStats = population.reduceRegion({
+    reducer: ee.Reducer.mean().combine({
+      reducer2: ee.Reducer.max(),
+      sharedInputs: true
+    }),
+    geometry: region,
+    scale: 1000,
+    maxPixels: 1e13
+  });
+  
+  var popDensityReclass = population.gt(200).selfMask();  // Classify areas with population > 200
+  
+  var popVectors = popDensityReclass.reduceToVectors({
+    geometry: region,
+    scale: 1000,
+    geometryType: 'polygon',
+    labelProperty: 'pop_zone',
+    maxPixels: 1e13
+  });
+
+  var roads = ee.FeatureCollection("projects/ee-haniyahsultan14/assets/roads").filterBounds(region);
+  var schools = ee.FeatureCollection("projects/ee-haniyahsultan14/assets/hotosm_pak_education_facilities_points_shp").filterBounds(region);
+
+  var popBuffer = popVectors.map(function(f) {
+    return f.buffer(popBufferDist);
+  }).union();  // Union after buffering
+
+  var roadBuffer = roads.map(function(f) {
+    return f.buffer(roadBufferDist);
+  }).union();  // Union after buffering
+
+  var schoolBuffer = schools.map(function(f) {
+    return f.buffer(schoolBufferDist);
+  }).union();  // Union after buffering
+
+  // --- 9. Binary Classification of Suitable Areas ---
+  var suitableAreas = popBuffer.geometry()
+    .intersection(roadBuffer.geometry())
+    .difference(schoolBuffer.geometry());
+
+  var unsuitableAreas = popBuffer.geometry()
+    .difference(roadBuffer.geometry())
+    .difference(schoolBuffer.geometry());
+
+  var suitableAreasFeature = ee.Feature(suitableAreas, {'label': 'Suitable Areas'});
+  var unsuitableAreasFeature = ee.Feature(unsuitableAreas, {'label': 'Unsuitable Areas'});
+
+  var suitableAreasCollection = ee.FeatureCollection([suitableAreasFeature]);
+  var unsuitableAreasCollection = ee.FeatureCollection([unsuitableAreasFeature]);
+
+  // --- 10. Add Layers to the Map ---
+  Map.layers().reset();  // Clear previous layers
+  
+  // Add district boundary
+  Map.addLayer(ee.FeatureCollection([ee.Feature(region)]), {color: 'black', fillColor: '00000000', width: 2}, "District Boundary");
+
+  // Add suitable areas layer
+  Map.addLayer(suitableAreasCollection, {color: 'green', fillColor: '4CAF50'}, "Suitable Areas");
+
+  // Add unsuitable areas layer
+  Map.addLayer(unsuitableAreasCollection, {color: 'red', fillColor: 'FF000077'}, "Unsuitable Areas");
+
+  // Add population density layer - hidden by default
+  Map.addLayer(population, {min: 0, max: 1000, palette: ["ffffe7", "ffc869", "ffac1d", "e17735", "f2552c", "9f0c21"]}, "Population Density", false);
+  
+  // Add roads layer - hidden by default
+  Map.addLayer(roads, {color: 'yellow'}, "Roads", false);
+  
+  // Add schools layer - hidden by default
+  Map.addLayer(schools, {color: 'blue'}, "Existing Schools", false);
+
+  // --- 11. Create Analysis Summary Panel ---
+  var suitableArea = suitableAreas.area().divide(1000000);  // Convert to sq km
+  var unsuitableArea = unsuitableAreas.area().divide(1000000);  // Convert to sq km
+
+  // Remove existing summary panel if it exists
+  if (summaryPanel) {
+    Map.remove(summaryPanel);
+  }
+
+  // Evaluate the areas (suitable and unsuitable) and create summary panel
+  suitableArea.evaluate(function(area) {
+    unsuitableArea.evaluate(function(unsuitable) {
+      // If area is undefined, default to 0
+      if (area === undefined) area = 0;
+      if (unsuitable === undefined) unsuitable = 0;
+      
+      // Create compact summary panel with horizontal layout
+      var suitableLabel = ui.Label('Suitable: ' + area.toFixed(2) + ' km²', {fontSize: '9px'});
+      var unsuitableLabel = ui.Label('Unsuitable: ' + unsuitable.toFixed(2) + ' km²', {fontSize: '9px'});
+      
+      summaryPanel = ui.Panel({
+        widgets: [
+          ui.Label({value: 'Analysis Summary', style: {fontWeight: 'bold', fontSize: '10px'}}),
+          ui.Panel({
+            widgets: [suitableLabel, unsuitableLabel],
+            layout: ui.Panel.Layout.Flow('horizontal'),
+            style: {stretch: 'horizontal'}
+          })
+        ],
+        style: {
+          position: 'top-right',
+          padding: '4px',
+          backgroundColor: 'white',
+          width: 'auto'
+        }
+      });
+
+      Map.add(summaryPanel);  // Add the summary panel to the map
+    });
+  });
+  
+  // Add the legend after calculating layers
+  addLegend();
+}
+
+// --- 12. Add a compact legend ---
+function addLegend() {
+  if (legend) {
+    Map.remove(legend);
+  }
+
+  legend = ui.Panel({
+    style: {
+      position: 'bottom-right',
+      padding: '4px 6px',
+      backgroundColor: 'white'
+    }
+  });
+
+  var legendTitle = ui.Label({
+    value: 'Legend',
+    style: {fontWeight: 'bold', fontSize: '10px', margin: '0 0 2px 0', padding: '0'}
+  });
+  legend.add(legendTitle);
+
+  var items = [
+    {color: '4CAF50', label: 'Suitable', type: 'fill'},
+    {color: 'FF000077', label: 'Unsuitable', type: 'fill'},
+    {color: 'black', label: 'Boundary', type: 'line'},
+    {color: 'blue', label: 'Schools', type: 'point'},
+    {color: 'yellow', label: 'Roads', type: 'line'}
+  ];
+
+  // Create a two-column layout for legend items
+  var column1 = ui.Panel({style: {padding: '0px', margin: '0px'}});
+  var column2 = ui.Panel({style: {padding: '0px', margin: '0px'}});
+  
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+
+    var colorBox = ui.Label({
+      style: {
+        backgroundColor: item.color,
+        padding: '5px',
+        margin: '0 3px 2px 0'
+      }
+    });
+
+    var description = ui.Label({
+      value: item.label,
+      style: {margin: '0 0 2px 0', fontSize: '9px'}
+    });
+
+    var horizontalPanel = ui.Panel({
+      widgets: [colorBox, description],
+      layout: ui.Panel.Layout.Flow('horizontal')
+    });
+
+    // Distribute items between the two columns
+    if (i < 3) {
+      column1.add(horizontalPanel);
+    } else {
+      column2.add(horizontalPanel);
+    }
+  }
+  
+  // Add the columns to the legend in a horizontal layout
+  var columnsPanel = ui.Panel({
+    widgets: [column1, column2],
+    layout: ui.Panel.Layout.Flow('horizontal'),
+    style: {margin: '0px', padding: '0px'}
+  });
+  
+  legend.add(columnsPanel);
+  Map.add(legend);
+}
+
+// Show welcome message with basic instructions on startup
+var welcomeMessage = ui.Panel({
+  widgets: [
+    ui.Label({
+      value: 'Welcome to School Suitability Analysis', 
+      style: {fontWeight: 'bold', fontSize: '12px', margin: '0px 0px 4px 0px'}
+    }),
+    ui.Label({
+      value: 'To get started, select a district from the dropdown menu and click "Show".\nClick the "Help" button for detailed instructions.', 
+      style: {fontSize: '10px', margin: '0px 0px 4px 0px'}
+    }),
+    ui.Button({
+      label: 'OK',
+      onClick: function() {
+        Map.remove(welcomeMessage);
+      },
+      style: {fontSize: '10px'}
+    })
+  ],
+  style: {
+    position: 'top-center',
+    padding: '8px',
+    backgroundColor: 'white'
+  }
+});
+
+Map.add(welcomeMessage);
+
+// Initialize the map with Pakistan centered
+Map.setCenter(68.7, 25.8, 6);
