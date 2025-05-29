@@ -78,19 +78,3 @@ This project performs a spatial analysis to identify suitable locations for esta
 
 ---
 
-## License
-
-This project is provided for educational and research purposes. Please cite appropriately if used in publications.
-
----
-
-## Contact
-
-For any questions or collaboration, please reach out at:
-
-- Email: your.email@example.com  
-- GitHub: [your-github-username](https://github.com/your-github-username)  
-
----
-
-*Thank you for exploring this school suitability analysis project using Google Earth Engine!*
